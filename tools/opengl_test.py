@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# coding=utf-8
+
 import sys
 sys.path.insert(0, '.')
 import argparse
@@ -10,6 +13,12 @@ import cv2
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from OpenGL.GLUT import *
+
+import rospy
+from geometry_msgs.msg import *
+from speech_recognition_msgs.msg import *
+from speech_recognition_msgs.srv import *
+
 
 import lib.transform_cv2 as T
 from lib.models import model_factory
@@ -35,7 +44,7 @@ tex_firesword = {'num':3, 'width':64, 'height':64, 'name':'./firesword.png'}
 tex_background = {'num':6, 'width':64, 'height':64, 'name':'./background.png'}
 tex_video = {'num':1, 'width':512, 'height':512}
 tex_human = {'num':5, 'width':512, 'height':512}
-mode = 0
+mode = -1
 ImageWidth_ = 640
 ImageHeight_ = 360
 #ImageWidth = 512
@@ -65,8 +74,23 @@ to_tensor = T.ToTensor(
     std=(0.2112, 0.2148, 0.2115),
 )
 
-#cap = cv2.VideoCapture(2)
-cap = cv2.VideoCapture("/Volumes/GoogleDrive/マイドライブ/video/video1.mp4")
+#cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture("/home/mech-user/Videos/video2.mp4")
+
+def roscb(msg):
+    global mode
+    rospy.loginfo(msg.transcript[0])
+
+    if msg.transcript[0] == "水の呼吸":
+        mode = 0
+    if msg.transcript[0] == "ヒノカミ神楽":
+        mode = 1
+
+    
+
+def rosinit():
+    rospy.init_node("sample_julius")
+    rospy.Subscriber("/speech_to_text", SpeechRecognitionCandidates, roscb)
 
 def texparaminit():
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
@@ -239,8 +263,8 @@ def display():
     if mode == 1:
         drawcambus(tex_background['num'], -0.8)
         drawcambus(tex_human['num'], -0.7)
-
-    drawflow2()
+    if mode == 0 or mode == 1:
+        drawflow2()
     if mode == 1:
         drawsword()
     glutSwapBuffers()
@@ -281,7 +305,8 @@ def idle():
 
         out = cv2.flip(out, 0)
         out_sword = cv2.resize(np.where(out == 2, 255, 0).astype('uint8'), (160, 90))
-        _, contours, _ = cv2.findContours(out_sword,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+        #_, contours, _= cv2.findContours(out_sword,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+        contours, _= cv2.findContours(out_sword,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 
         
         ### calc parameter about detected sword ###
@@ -324,6 +349,7 @@ def _keyfunc (c, x, y):
     sys.exit (0)
 
 def main():
+    rosinit()
     glutInit([])
     glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(ImageWidth_, ImageHeight_)
@@ -334,6 +360,7 @@ def main():
     glutReshapeFunc(reshape)
     glutKeyboardFunc(_keyfunc)
     glutIdleFunc(idle)
+    #glutFullScreen()
     glutMainLoop()
 
 if __name__ == "__main__":
