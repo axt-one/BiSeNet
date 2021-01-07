@@ -15,6 +15,7 @@ from OpenGL.GLU import *
 from OpenGL.GLUT import *
 
 import rospy
+import rosgraph
 from geometry_msgs.msg import *
 from speech_recognition_msgs.msg import *
 from speech_recognition_msgs.srv import *
@@ -30,28 +31,22 @@ t1 = time.time()
 
 torch.set_grad_enabled(False)
 np.random.seed(123)
-#tex = {'video':0, 'water':1}
-#tex_image = 0
-#tex_video = 1
-#TexWidth = 256
-#TexHeight = 256
-#TexName = "./test6.png"
 #tex_water = {'num':0, 'width':256, 'height':256, 'name':'./test6.png'}
 tex_water = {'num':0, 'width':1024, 'height':256, 'name':'./test8.png'}
-tex_fireflow = {'num':4, 'width':64, 'height':64, 'name':'./fireflow.png'}
+tex_fireflow = {'num':1, 'width':64, 'height':64, 'name':'./fireflow.png'}
 tex_splash = {'num':2, 'width':64, 'height':64, 'name':'./splash.png'}
 tex_firesword = {'num':3, 'width':64, 'height':64, 'name':'./firesword.png'}
-tex_background = {'num':6, 'width':64, 'height':64, 'name':'./background.png'}
-tex_video = {'num':1, 'width':512, 'height':512}
-tex_human = {'num':5, 'width':512, 'height':512}
-mode = -1
-ImageWidth_ = 640
-ImageHeight_ = 360
-#ImageWidth = 512
-#ImageHeight = 512
+tex_background = {'num':4, 'width':64, 'height':64, 'name':'./background.png'}
+tex_mode = {'num':5, 'width':512, 'height':512, 'name':'./mode.png'}
+tex_video = {'num':6, 'width':512, 'height':512}
+tex_foreground = {'num':7, 'width':512, 'height':512}
+tex_label = {'num':8, 'width':512, 'height':512}
+tex_list = [tex_water, tex_fireflow, tex_splash, tex_firesword, tex_background, tex_mode, tex_video, tex_foreground, tex_label]
+drawmode = 0 #0:水の呼吸, 1:ヒノカミ神楽
+mode = 1
+
 box = []
 orbit = np.zeros((2,2,10)) #2点x2次元x10フレーム
-#cap = cv2.VideoCapture(2)
 
 
 # args
@@ -59,6 +54,7 @@ parse = argparse.ArgumentParser()
 parse.add_argument('--model', dest='model', type=str, default='bisenetv2',)
 parse.add_argument('--weight-path', type=str, default='./res/model_final.pth',)
 parse.add_argument('--img-path', dest='img_path', type=str, default='./example.png',)
+parse.add_argument('--video', type=int, default=1)
 args = parse.parse_args()
 cfg = cfg_factory[args.model]
 
@@ -74,23 +70,28 @@ to_tensor = T.ToTensor(
     std=(0.2112, 0.2148, 0.2115),
 )
 
-#cap = cv2.VideoCapture(0)
-cap = cv2.VideoCapture("/home/mech-user/Videos/video2.mp4")
+if args.video == 0:
+    cap = cv2.VideoCapture(0)
+else:
+    cap = cv2.VideoCapture(f'/home/mech-user/Videos/video{args.video}.mp4')
+ImageWidth_ = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+ImageHeight_ = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 def roscb(msg):
-    global mode
+    global drawmode
     rospy.loginfo(msg.transcript[0])
-
-    if msg.transcript[0] == "水の呼吸":
-        mode = 0
-    if msg.transcript[0] == "ヒノカミ神楽":
-        mode = 1
+    if mode == 2:
+        if msg.transcript[0] == "水の呼吸":
+            drawmode = 0
+        if msg.transcript[0] == "ヒノカミ神楽":
+            drawmode = 1
 
     
 
 def rosinit():
-    rospy.init_node("sample_julius")
-    rospy.Subscriber("/speech_to_text", SpeechRecognitionCandidates, roscb)
+    if rosgraph.is_master_online():
+        rospy.init_node("sample_julius")
+        rospy.Subscriber("/speech_to_text", SpeechRecognitionCandidates, roscb)
 
 def texparaminit():
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP)
@@ -109,19 +110,22 @@ def loadtex(tex):
 
 
 def init():
-    #glViewport(0,0,640,480)
-    glClearColor(0.0, 1.0, 1.0, 1.0)
-    glShadeModel(GL_FLAT)
+    global tex_list
+    glClearColor(0.0, 0.0, 0.0, 1.0)
+    glShadeModel(GL_SMOOTH)
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_BLEND)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
-    #texlist=glGenTextures(2)
+    texnums=glGenTextures(len(tex_list))
+    for i, tex in enumerate(tex_list):
+        tex['num'] = texnums[i]
     loadtex(tex_water)
     loadtex(tex_splash)
     loadtex(tex_firesword)
     loadtex(tex_fireflow)
     loadtex(tex_background)
+    loadtex(tex_mode)
     glEnable(GL_TEXTURE_2D)
 
 def spline(x,y,point,deg):
@@ -161,9 +165,7 @@ def drawsplash(coord, size):
 
 def drawflow2():
     index = np.where(np.all(orbit.reshape(4,-1) == 0, axis=0))[0]
-    orbit_not_zero = np.delete(orbit.reshape(4,-1), index, 1)#.reshape(2,2,-1)
-    #index2 = np.sort(np.unique(orbit_not_zero, axis=1, return_index=True)[1])
-    #orbit_not_zero = orbit_not_zero[index2].reshape(2,2,-1)
+    orbit_not_zero = np.delete(orbit.reshape(4,-1), index, 1)
     index2 = np.unique(orbit_not_zero[0:2,:], axis=1, return_index=True)[1]
     index3 = np.unique(orbit_not_zero[2:4,:], axis=1, return_index=True)[1]
     index4 = np.sort(np.array(list(set(index2) & set(index3))))
@@ -174,12 +176,12 @@ def drawflow2():
     x1, y1 = spline(orbit_not_zero[0,0,:], orbit_not_zero[0,1,:], 50, 3)
     x2, y2 = spline(orbit_not_zero[1,0,:], orbit_not_zero[1,1,:], 50, 3)
     n = len(x1)
-    if mode == 0:
+    if drawmode == 0:
         glBindTexture(GL_TEXTURE_2D, tex_water['num'])
-    elif mode == 1:
+    elif drawmode == 1:
         glBindTexture(GL_TEXTURE_2D, tex_fireflow['num'])
     glBegin(GL_TRIANGLE_STRIP)
-    splist = []
+    # splist = []
     for i in range(len(x1)):
         #if np.random.randint(10) == 0:
         #    splist += [[x2[i], y1[i]]]
@@ -189,10 +191,11 @@ def drawflow2():
         glVertex3f(x2[i], y2[i], 0.1)
     glEnd()
 
-    if mode == 0:
+    if drawmode == 0:
         for i in range(orbit_not_zero.shape[2]):
-            drawsplash(orbit_not_zero[0,:,i], [20*i-2*i*i,20*i-2*i*i])
-            drawsplash(orbit_not_zero[1,:,i], [20*i-2*i*i,20*i-2*i*i])
+            size = np.array([10*i-i*i, 10*i-i*i])*ImageWidth_*0.002
+            drawsplash(orbit_not_zero[0,:,i], size)
+            drawsplash(orbit_not_zero[1,:,i], size)
         
         #for j in range(5):
         #    coord = np.average(orbit_not_zero[:,:,i],axis=0,weights=[j/5,1-j/5]) + 20*np.sin([j*np.pi/4, j*np.pi/2])
@@ -226,47 +229,46 @@ def drawcambus(texnum, z):
     glTexCoord2f(0.0, 0.0); glVertex3f(0.0, 0.0, z)
     glEnd()
 
+def selectmode():
+    glColor4f(0.0, 0.0, 1.0, 0.5)
+    glRectf(0.0, 0.0, ImageWidth_, ImageHeight_)
+
+    glPushMatrix()
+    #glRasterPos3f(100,50,0.9)
+    glTranslatef(100,50,0.9)
+    glLineWidth(10)
+    glColor4f(1.0, 1.0, 1.0, 1.0)
+    text = b'mode'
+    glutStrokeString(GLUT_STROKE_ROMAN, text)
+    #glutBitmapString(GLUT_BITMAP_HELVETICA_18, text)
+    glPopMatrix()
+
+
 def display():
-    #global t1
-    #print(time.time() - t1)
-    #t1 = time.time()
+    # global t1
+    # print(time.time() - t1)
+    # t1 = time.time()
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
     #glDisable(GL_DEPTH_TEST)
 
-    # glBindTexture(GL_TEXTURE_2D, tex_video['num'])
-    # glBegin(GL_QUADS)
-    # glTexCoord2f(1.0, 0.0); glVertex3f(ImageWidth_, 0.0, -0.9)
-    # glTexCoord2f(1.0, 1.0); glVertex3f(ImageWidth_, ImageHeight_, -0.9)
-    # glTexCoord2f(0.0, 1.0); glVertex3f(0.0, ImageHeight_, -0.9)
-    # glTexCoord2f(0.0, 0.0); glVertex3f(0.0, 0.0, -0.9)
-    # glEnd()
-
-    # glBindTexture(GL_TEXTURE_2D, tex_firesword['num'])
-    # glBegin(GL_QUADS)
-    # glTexCoord2f(1.0, 0.0); glVertex3f(ImageWidth_, 0.0, -0.8)
-    # glTexCoord2f(1.0, 1.0); glVertex3f(ImageWidth_, ImageHeight_, -0.8)
-    # glTexCoord2f(0.0, 1.0); glVertex3f(0.0, ImageHeight_, -0.8)
-    # glTexCoord2f(0.0, 0.0); glVertex3f(0.0, 0.0, -0.8)
-    # glEnd()
-    
-    # glBindTexture(GL_TEXTURE_2D, tex_human['num'])
-    # glBegin(GL_QUADS)
-    # glTexCoord2f(1.0, 0.0); glVertex3f(ImageWidth_, 0.0, -0.7)
-    # glTexCoord2f(1.0, 1.0); glVertex3f(ImageWidth_, ImageHeight_, -0.7)
-    # glTexCoord2f(0.0, 1.0); glVertex3f(0.0, ImageHeight_, -0.7)
-    # glTexCoord2f(0.0, 0.0); glVertex3f(0.0, 0.0, -0.7)
-    # glEnd()
-
     drawcambus(tex_video['num'], -0.9)
-    if mode == 1:
-        drawcambus(tex_background['num'], -0.8)
-        drawcambus(tex_human['num'], -0.7)
-    if mode == 0 or mode == 1:
-        drawflow2()
-    if mode == 1:
-        drawsword()
+
+    if mode == 0:
+        drawcambus(tex_mode['num'], -0.8)
+        #selectmode()
+    elif mode == 1 or mode == 2:
+        if drawmode == 0:
+            drawflow2()
+        elif drawmode == 1:
+            drawcambus(tex_background['num'], -0.8)
+            drawcambus(tex_foreground['num'], -0.7)
+            drawflow2()
+            drawsword()
+    elif mode == 3:
+        drawcambus(tex_label['num'], -0.8)
+
     glutSwapBuffers()
     #glFlush()
 
@@ -290,23 +292,36 @@ def idle():
         im = to_tensor(dict(im=im, lb=None))['im'].unsqueeze(0)#.cuda()
         out = net(im)[0].argmax(dim=1).squeeze().detach().cpu().numpy()
         
-        ### make texture of human ###
-        if mode == 1:
-            human_mask = np.where(out != 0, 255, 0).astype('uint8')
-            human_mask = cv2.resize(human_mask, (im_raw.shape[1], im_raw.shape[0]))#, interpolation=cv2.INTER_CUBIC)
-            humantex = np.dstack([im_raw, human_mask])#np.where(human_mask > 100, 255, 0).astype('uint8')
-            humantex = cv2.cvtColor(humantex, cv2.COLOR_BGRA2RGBA)
-            humantex = cv2.resize(humantex, (tex_human['width'], tex_human['height']))
-            humantex = cv2.flip(humantex, 0)
-            glBindTexture(GL_TEXTURE_2D, tex_human['num'])
+        ### make texture of foreground ###
+        #if (mode == 0 or mode == 1 ) and drawmode == 1:
+        if mode == 1 or mode == 2:
+            foreground_mask = np.where(out != 0, 255, 0).astype('uint8')
+            foreground_mask = cv2.resize(foreground_mask, (im_raw.shape[1], im_raw.shape[0]))#, interpolation=cv2.INTER_CUBIC)
+            foreground_tex = np.dstack([im_raw, foreground_mask])#np.where(foreground_mask > 100, 255, 0).astype('uint8')
+            foreground_tex = cv2.cvtColor(foreground_tex, cv2.COLOR_BGRA2RGBA)
+            foreground_tex = cv2.resize(foreground_tex, (tex_foreground['width'], tex_foreground['height']))
+            foreground_tex = cv2.flip(foreground_tex, 0)
+            glBindTexture(GL_TEXTURE_2D, tex_foreground['num'])
             texparaminit()
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex_video['width'], tex_video['height'], 0, GL_RGBA, GL_UNSIGNED_BYTE, humantex.tobytes())
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex_video['width'], tex_video['height'], 0, GL_RGBA, GL_UNSIGNED_BYTE, foreground_tex.tobytes())
+
+        if mode == 3:
+            palette = np.array([[0,255,255,127],[0,0,255,127],[0,255,0,127]])
+            label_image = palette[out].astype('uint8')
+            label_image = cv2.resize(label_image, (tex_label['width'], tex_label['height']))
+            label_image = cv2.flip(label_image, 0)
+            glBindTexture(GL_TEXTURE_2D, tex_label['num'])
+            texparaminit()
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex_label['width'], tex_label['height'], 0, GL_RGBA, GL_UNSIGNED_BYTE, label_image.tobytes())
 
 
         out = cv2.flip(out, 0)
         out_sword = cv2.resize(np.where(out == 2, 255, 0).astype('uint8'), (160, 90))
-        #_, contours, _= cv2.findContours(out_sword,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
-        contours, _= cv2.findContours(out_sword,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+
+        if int(cv2.__version__[0]) >= 4:
+            contours, _= cv2.findContours(out_sword,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
+        else:
+            _, contours, _= cv2.findContours(out_sword,cv2.RETR_LIST,cv2.CHAIN_APPROX_SIMPLE)
 
         
         ### calc parameter about detected sword ###
@@ -320,10 +335,6 @@ def idle():
                     tmp = length
                     rect = rect_i            
             box = cv2.boxPoints(rect)
-            #x1 = box[0:2]
-            #x2 = box[1:3]
-            #l = np.sum((x1 - x2)**2, axis=1)
-            #if l[0] < l[1]:
             if rect[1][0] > rect[1][1]:
                 box = np.roll(box, 1, axis=0)
             box[:,0] = box[:,0]*ImageWidth_/out_sword.shape[1]
@@ -346,7 +357,27 @@ def reshape(w, h):
 
 
 def _keyfunc (c, x, y):
-    sys.exit (0)
+    global mode, drawmode
+    if c == b'q':
+        cap.release()
+        sys.exit (0)
+    if c == b'm':
+        mode = 0
+    if mode == 0:
+        if c == b'1':
+            mode = 1
+            drawmode = 0
+        if c == b'2':
+            mode = 2
+            drawmode = 2
+        if c == b'3':
+            mode = 3
+    if mode == 1:
+        if c == b'1':
+            drawmode = 0
+        if c == b'2':
+            drawmode = 1
+
 
 def main():
     rosinit()
