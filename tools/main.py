@@ -55,7 +55,7 @@ parse = argparse.ArgumentParser()
 parse.add_argument('--model', dest='model', type=str, default='bisenetv2',)
 parse.add_argument('--weight-path', type=str, default='./res/model_final.pth',)
 parse.add_argument('--img-path', dest='img_path', type=str, default='./example.png',)
-parse.add_argument('--video', type=int, default=1)
+parse.add_argument('--video', type=int, default=0)
 args = parse.parse_args()
 cfg = cfg_factory[args.model]
 
@@ -294,8 +294,8 @@ def idle():
         im = to_tensor(dict(im=im, lb=None))['im'].unsqueeze(0)#.cuda()
         #t1 = time.time()
         out = net(im)[0].argmax(dim=1).squeeze().detach().cpu().numpy()
-        print(1 / (time.time() - t1))
-        t1 = time.time()
+        #print(1 / (time.time() - t1))
+        #t1 = time.time()
         
         ### make texture of foreground ###
         #if (mode == 0 or mode == 1 ) and drawmode == 1:
@@ -390,6 +390,8 @@ def _keyfunc (c, x, y):
             drawframe = 1
         if c == b'2':
             drawmode = 1
+        if c == b'3':
+            drawmode = -1
 
 
 def main():
@@ -398,7 +400,7 @@ def main():
     glutInitDisplayMode(GLUT_SINGLE | GLUT_RGB | GLUT_DEPTH)
     glutInitWindowSize(ImageWidth_, ImageHeight_)
     glutInitWindowPosition(100, 100)
-    glutCreateWindow("test")
+    glutCreateWindow("gazo syori no kokyu")
     init()
     glutDisplayFunc(display)
     glutReshapeFunc(reshape)
